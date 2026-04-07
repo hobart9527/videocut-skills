@@ -3,7 +3,7 @@
  * 审核服务器
  *
  * 功能：
- * 1. 提供静态文件服务（review.html, audio.mp3）
+ * 1. 提供静态文件服务（review.html, video.mp4）
  * 2. POST /api/cut - 接收删除列表，执行剪辑
  *
  * 用法: node review_server.js [port] [video_file]
@@ -190,21 +190,21 @@ function getEncoder() {
 // 内置 FFmpeg 剪辑逻辑（filter_complex 精确剪辑 + buffer + crossfade）
 function executeFFmpegCut(input, deleteList, output) {
   // 配置参数
-  const BUFFER_MS = 50;     // 删除范围前后各扩展 50ms（吃掉气口和残音）
+  const BUFFER_MS = 120;    // 删除范围前后各扩展 120ms（吃掉尾音和气口）
   const CROSSFADE_MS = 30;  // 音频淡入淡出 30ms
 
   console.log(`⚙️ 优化参数: 扩展范围=${BUFFER_MS}ms, 音频crossfade=${CROSSFADE_MS}ms`);
 
-  // 检测音频偏移量（audio.mp3 的 start_time）
+  // 检测音频偏移量（MP3编码引入的延迟）
   let audioOffset = 0;
-  try {
-    const offsetCmd = `ffprobe -v error -show_entries format=start_time -of csv=p=0 audio.mp3`;
-    audioOffset = parseFloat(execSync(offsetCmd).toString().trim()) || 0;
-    if (audioOffset > 0) {
-      console.log(`🔧 检测到音频偏移: ${audioOffset.toFixed(3)}s，自动补偿`);
-    }
-  } catch (e) {
-    // 忽略，使用默认 0
+  const audioPath = path.resolve(path.dirname(path.dirname(process.cwd())), '1_转录', 'audio.mp3');
+  if (fs.existsSync(audioPath)) {
+    try {
+      audioOffset = parseFloat(execSync(`ffprobe -v error -show_entries format=start_time -of csv=p=0 "${audioPath}"`).toString().trim()) || 0;
+      if (audioOffset > 0) {
+        console.log(`🔧 检测到音频偏移: ${audioOffset.toFixed(3)}s，自动补偿`);
+      }
+    } catch (e) { /* 忽略 */ }
   }
 
   // 获取视频总时长
@@ -214,18 +214,19 @@ function executeFFmpegCut(input, deleteList, output) {
   const bufferSec = BUFFER_MS / 1000;
   const crossfadeSec = CROSSFADE_MS / 1000;
 
-  // 补偿偏移 + 扩展删除范围（前后各加 buffer）
+  // 不扩展删除范围，使用精确边界（防止吃掉相邻保留字的头尾音）
   const expandedDelete = deleteList
     .map(seg => ({
-      start: Math.max(0, seg.start - audioOffset - bufferSec),
-      end: Math.min(duration, seg.end - audioOffset + bufferSec)
+      start: Math.max(0, seg.start - audioOffset),
+      end: Math.min(duration, seg.end - audioOffset)
     }))
     .sort((a, b) => a.start - b.start);
 
-  // 合并重叠的删除段
+  // 合并重叠 + 间隙小于 200ms 的相邻删除段（避免产生无意义碎片）
+  const MERGE_GAP = 0.2;
   const mergedDelete = [];
   for (const seg of expandedDelete) {
-    if (mergedDelete.length === 0 || seg.start > mergedDelete[mergedDelete.length - 1].end) {
+    if (mergedDelete.length === 0 || seg.start > mergedDelete[mergedDelete.length - 1].end + MERGE_GAP) {
       mergedDelete.push({ ...seg });
     } else {
       mergedDelete[mergedDelete.length - 1].end = Math.max(mergedDelete[mergedDelete.length - 1].end, seg.end);

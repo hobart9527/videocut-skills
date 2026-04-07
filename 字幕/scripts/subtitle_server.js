@@ -152,7 +152,7 @@ const server = http.createServer((req, res) => {
         });
 
         const outputPath = './3_输出/' + baseName + '_字幕.mp4';
-        const args = ['-i', VIDEO_PATH, '-vf', `subtitles='${srtPath}':force_style='FontSize=22,FontName=PingFang SC,Bold=1,PrimaryColour=&H0000deff,OutlineColour=&H00000000,Outline=${outlineVal},Alignment=2,MarginV=30'`, '-c:a', 'copy', '-y', outputPath];
+        const args = ['-i', VIDEO_PATH, '-vf', `subtitles='${srtPath}':force_style='FontSize=22,FontName=PingFang SC,Bold=1,PrimaryColour=&H0000deff,OutlineColour=&H00000000,Outline=${outlineVal},Alignment=2,MarginV=30'`, '-crf', '18', '-preset', 'medium', '-c:a', 'copy', '-y', outputPath];
 
         console.log('🎬 烧录字幕...');
         const startTime = Date.now();

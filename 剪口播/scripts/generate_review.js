@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * 生成审核网页（wavesurfer.js 版本）
+ * 生成审核网页（视频版本）
  *
- * 用法: node generate_review.js <subtitles_words.json> [auto_selected.json] [audio_file]
- * 输出: review.html, audio.mp3（复制到当前目录）
+ * 用法: node generate_review.js <subtitles_words.json> [auto_selected.json] [video_file]
+ * 输出: review.html, video.mp4（符号链接到当前目录）
  */
 
 const fs = require('fs');
@@ -11,13 +11,15 @@ const path = require('path');
 
 const subtitlesFile = process.argv[2] || 'subtitles_words.json';
 const autoSelectedFile = process.argv[3] || 'auto_selected.json';
-const audioFile = process.argv[4] || 'audio.mp3';
+const videoFile = process.argv[4] || 'video.mp4';
 
-// 复制音频文件到当前目录（避免相对路径问题）
-const audioBaseName = 'audio.mp3';
-if (audioFile !== audioBaseName && fs.existsSync(audioFile)) {
-  fs.copyFileSync(audioFile, audioBaseName);
-  console.log('📁 已复制音频到当前目录:', audioBaseName);
+// 创建视频文件的符号链接到当前目录（避免复制大文件）
+const videoBaseName = 'video.mp4';
+if (videoFile !== videoBaseName && fs.existsSync(videoFile)) {
+  const absVideoPath = path.resolve(videoFile);
+  if (fs.existsSync(videoBaseName)) fs.unlinkSync(videoBaseName);
+  fs.symlinkSync(absVideoPath, videoBaseName);
+  console.log('📁 已链接视频到当前目录:', videoBaseName, '→', absVideoPath);
 }
 
 if (!fs.existsSync(subtitlesFile)) {
@@ -39,26 +41,26 @@ const html = `<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>审核稿</title>
-  <script src="https://unpkg.com/wavesurfer.js@7"></script>
   <style>
     * { box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      max-width: 900px;
-      margin: 0 auto;
-      padding: 20px;
+      margin: 0;
+      padding: 0;
       background: #1a1a1a;
       color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
-    h1 { text-align: center; margin-bottom: 20px; }
+    h1 { text-align: center; margin: 10px 0; font-size: 20px; }
 
-    .controls {
-      position: sticky;
-      top: 0;
+    .toolbar {
       background: #1a1a1a;
-      padding: 15px 0;
+      padding: 10px 20px;
       border-bottom: 1px solid #333;
-      z-index: 100;
+      flex-shrink: 0;
     }
 
     .buttons {
@@ -66,7 +68,6 @@ const html = `<!DOCTYPE html>
       gap: 10px;
       align-items: center;
       flex-wrap: wrap;
-      margin-bottom: 15px;
     }
 
     button {
@@ -99,15 +100,47 @@ const html = `<!DOCTYPE html>
       color: #888;
     }
 
-    #waveform {
-      background: #252525;
+    .main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .left-panel {
+      width: 420px;
+      flex-shrink: 0;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      border-right: 1px solid #333;
+    }
+
+    #player {
+      width: 100%;
       border-radius: 4px;
-      margin: 10px 0;
+      background: #000;
+    }
+
+    .help {
+      font-size: 12px;
+      color: #999;
+      background: #252525;
+      padding: 10px;
+      border-radius: 6px;
+      line-height: 1.6;
+    }
+    .help b { color: #fff; }
+    .help div { margin: 2px 0; }
+
+    .right-panel {
+      flex: 1;
+      overflow-y: auto;
+      padding: 15px 20px;
     }
 
     .content {
       line-height: 2.5;
-      padding: 20px 0;
     }
 
     .word {
@@ -141,24 +174,11 @@ const html = `<!DOCTYPE html>
     .gap.ai-selected.selected { background: #f44336; }
 
     .stats {
-      margin-top: 10px;
       padding: 10px;
       background: #252525;
       border-radius: 4px;
       font-size: 14px;
     }
-
-    .help {
-      font-size: 13px;
-      color: #999;
-      margin-top: 10px;
-      background: #252525;
-      padding: 12px;
-      border-radius: 6px;
-      line-height: 1.8;
-    }
-    .help b { color: #fff; }
-    .help div { margin: 2px 0; }
 
     /* Loading 遮罩 */
     .loading-overlay {
@@ -227,12 +247,10 @@ const html = `<!DOCTYPE html>
     <div class="loading-estimate" id="loadingEstimate">预估剩余: 计算中...</div>
   </div>
 
-  <h1>审核稿</h1>
-
-  <div class="controls">
+  <div class="toolbar">
     <div class="buttons">
-      <button onclick="wavesurfer.playPause()">▶️ 播放/暂停</button>
-      <select id="speed" onchange="wavesurfer.setPlaybackRate(parseFloat(this.value))">
+      <button onclick="togglePlay()">▶️ 播放/暂停</button>
+      <select id="speed" onchange="player.playbackRate=parseFloat(this.value)">
         <option value="0.5">0.5x</option>
         <option value="0.75">0.75x</option>
         <option value="1" selected>1x</option>
@@ -245,36 +263,35 @@ const html = `<!DOCTYPE html>
       <button class="danger" onclick="clearAll()">🗑️ 清空选择</button>
       <span id="time">00:00 / 00:00</span>
     </div>
-    <div id="waveform"></div>
-    <div class="help">
-      <div><b>🖱️ 鼠标：</b>单击 = 跳转播放 | 双击 = 选中/取消 | Shift+拖动 = 批量选中/取消</div>
-      <div><b>⌨️ 键盘：</b>空格 = 播放/暂停 | ← → = 跳转1秒 | Shift+←→ = 跳转5秒</div>
-      <div><b>🎨 颜色：</b><span style="color:#ff9800">橙色</span> = AI预选 | <span style="color:#f44336">红色删除线</span> = 已确认删除 | 播放时自动跳过选中片段</div>
-    </div>
   </div>
 
-  <div class="content" id="content"></div>
-  <div class="stats" id="stats"></div>
+  <div class="main">
+    <div class="left-panel">
+      <video id="player" src="${videoBaseName}" preload="auto"></video>
+      <div class="stats" id="stats"></div>
+      <div class="help">
+        <div><b>🖱️ 鼠标：</b>单击跳转 | 双击选中 | Shift+拖动批量</div>
+        <div><b>⌨️ 键盘：</b>空格播放 | ←→跳1s | Shift+←→跳5s</div>
+        <div><b>🎨 颜色：</b><span style="color:#ff9800">橙色</span>AI预选 | <span style="color:#f44336">红色</span>确认删除</div>
+      </div>
+    </div>
+    <div class="right-panel">
+      <div class="content" id="content"></div>
+    </div>
+  </div>
 
   <script>
     const words = ${JSON.stringify(words)};
     const autoSelected = new Set(${JSON.stringify(autoSelected)});
     const selected = new Set(autoSelected);
 
-    // 初始化 wavesurfer
-    const wavesurfer = WaveSurfer.create({
-      container: '#waveform',
-      waveColor: '#4a9eff',
-      progressColor: '#1976D2',
-      cursorColor: '#fff',
-      height: 80,
-      barWidth: 2,
-      barGap: 1,
-      barRadius: 2,
-      url: '${audioBaseName}'
-    });
-
+    const player = document.getElementById('player');
     const timeDisplay = document.getElementById('time');
+
+    function togglePlay() {
+      if (player.paused) player.play();
+      else player.pause();
+    }
     const content = document.getElementById('content');
     const statsDiv = document.getElementById('stats');
     let elements = [];
@@ -324,7 +341,7 @@ const html = `<!DOCTYPE html>
         // 单击跳转播放
         div.onclick = (e) => {
           if (!isSelecting) {
-            wavesurfer.setTime(word.start);
+            player.currentTime = word.start;
           }
         };
 
@@ -373,6 +390,7 @@ const html = `<!DOCTYPE html>
     });
 
     document.addEventListener('mouseup', () => {
+      if (isSelecting) rebuildSkipIntervals();
       isSelecting = false;
     });
 
@@ -386,6 +404,7 @@ const html = `<!DOCTYPE html>
         elements[i].classList.add('selected');
         elements[i].classList.remove('ai-selected');
       }
+      rebuildSkipIntervals();
       updateStats();
     }
 
@@ -398,49 +417,75 @@ const html = `<!DOCTYPE html>
       statsDiv.textContent = \`已选择 \${count} 个元素，总时长 \${totalDuration.toFixed(2)}s\`;
     }
 
-    // 时间更新 & 高亮当前词 & 跳过选中片段
-    wavesurfer.on('timeupdate', (t) => {
-      // 播放时跳过选中片段（找到连续选中的末尾）
-      if (wavesurfer.isPlaying()) {
-        const sortedSelected = Array.from(selected).sort((a, b) => a - b);
-        for (const i of sortedSelected) {
-          const w = words[i];
-          if (t >= w.start && t < w.end) {
-            // 找到连续选中片段的末尾
-            let endTime = w.end;
-            let j = sortedSelected.indexOf(i) + 1;
-            while (j < sortedSelected.length) {
-              const nextIdx = sortedSelected[j];
-              const nextW = words[nextIdx];
-              // 如果下一个紧挨着（间隔<0.1s），继续跳
-              if (nextW.start - endTime < 0.1) {
-                endTime = nextW.end;
-                j++;
-              } else {
-                break;
-              }
+    // Web Audio API：采样级精度静音（~3ms vs player.muted 的 ~50ms）
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioCtx.createMediaElementSource(player);
+    const gainNode = audioCtx.createGain();
+    source.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    player.addEventListener('play', () => { if (audioCtx.state === 'suspended') audioCtx.resume(); });
+
+    // 预计算跳过区间（selected 变化时重建）
+    let skipIntervals = [];
+    function rebuildSkipIntervals() {
+      const sorted = Array.from(selected).sort((a, b) => a - b);
+      skipIntervals = [];
+      let i = 0;
+      while (i < sorted.length) {
+        let start = words[sorted[i]].start;
+        let end = words[sorted[i]].end;
+        let j = i + 1;
+        while (j < sorted.length && words[sorted[j]].start - end < 0.1) {
+          end = words[sorted[j]].end;
+          j++;
+        }
+        skipIntervals.push({ start: start - 0.05, end });
+        i = j;
+      }
+    }
+    rebuildSkipIntervals();
+
+    // rAF 高频轮询 + Web Audio API 采样级静音
+    let lastHighlight = -1;
+    let skipLock = false;
+    function tick() {
+      requestAnimationFrame(tick);
+      const t = player.currentTime;
+
+      if (!player.paused) {
+        for (const iv of skipIntervals) {
+          if (t >= iv.start && t < iv.end) {
+            if (!skipLock) {
+              skipLock = true;
+              gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+              player.currentTime = iv.end;
             }
-            wavesurfer.setTime(endTime);
             return;
           }
         }
+        if (skipLock) {
+          skipLock = false;
+          gainNode.gain.setValueAtTime(1, audioCtx.currentTime);
+        }
       }
 
-      timeDisplay.textContent = \`\${formatTime(t)} / \${formatTime(wavesurfer.getDuration())}\`;
+      timeDisplay.textContent = \`\${formatTime(t)} / \${formatTime(player.duration || 0)}\`;
 
-      // 高亮当前词
-      elements.forEach((el, i) => {
-        const word = words[i];
-        if (t >= word.start && t < word.end) {
-          if (!el.classList.contains('current')) {
-            el.classList.add('current');
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        } else {
-          el.classList.remove('current');
+      // 高亮当前词（用二分查找提速）
+      let curr = -1;
+      for (let i = 0; i < words.length; i++) {
+        if (t >= words[i].start && t < words[i].end) { curr = i; break; }
+      }
+      if (curr !== lastHighlight) {
+        if (lastHighlight >= 0 && lastHighlight < elements.length) elements[lastHighlight].classList.remove('current');
+        if (curr >= 0) {
+          elements[curr].classList.add('current');
+          elements[curr].scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
-      });
-    });
+        lastHighlight = curr;
+      }
+    }
+    requestAnimationFrame(tick);
 
     function copyDeleteList() {
       const segments = [];
@@ -478,12 +523,13 @@ const html = `<!DOCTYPE html>
         el.classList.remove('selected');
         if (autoSelected.has(i)) el.classList.add('ai-selected');
       });
+      rebuildSkipIntervals();
       updateStats();
     }
 
     async function executeCut() {
       // 基于视频时长预估剪辑时间
-      const videoDuration = wavesurfer.getDuration();
+      const videoDuration = player.duration;
       const videoMinutes = (videoDuration / 60).toFixed(1);
       const estimatedTime = Math.max(5, Math.ceil(videoDuration / 4)); // 经验值：约4倍速处理
       const estMin = Math.floor(estimatedTime / 60);
@@ -567,11 +613,11 @@ const html = `<!DOCTYPE html>
     document.addEventListener('keydown', e => {
       if (e.code === 'Space') {
         e.preventDefault();
-        wavesurfer.playPause();
+        togglePlay();
       } else if (e.code === 'ArrowLeft') {
-        wavesurfer.setTime(Math.max(0, wavesurfer.getCurrentTime() - (e.shiftKey ? 5 : 1)));
+        player.currentTime = Math.max(0, player.currentTime - (e.shiftKey ? 5 : 1));
       } else if (e.code === 'ArrowRight') {
-        wavesurfer.setTime(wavesurfer.getCurrentTime() + (e.shiftKey ? 5 : 1));
+        player.currentTime = player.currentTime + (e.shiftKey ? 5 : 1);
       }
     });
 

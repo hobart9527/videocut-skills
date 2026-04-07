@@ -12,4 +12,10 @@ Agent
 剪映
 Agentx100
 口播
-claude code 
+claude code
+Kling
+DeepSeek
+分镜
+音画同步
+音画同出
+首帧 
