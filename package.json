@@ -1,0 +1,46 @@
+{
+  "name": "videocut-skills",
+  "version": "2.0.0",
+  "description": "口播视频智能剪辑工具 - 火山引擎转录 + AI 语义审核 + FFmpeg 精确剪辑",
+  "main": "src/cli.js",
+  "bin": {
+    "videocut": "bin/videocut"
+  },
+  "scripts": {
+    "start": "node bin/videocut",
+    "test": "node --test src/**/*.test.js"
+  },
+  "keywords": [
+    "video",
+    "剪辑",
+    "口播",
+    "asr",
+    "ffmpeg",
+    "subtitle",
+    "claude-code-skills"
+  ],
+  "author": "hobart9527",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hobart9527/videocut-skills.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "chalk": "^4.1.2",
+    "ora": "^5.4.1",
+    "inquirer": "^8.2.6"
+  },
+  "preferGlobal": true,
+  "files": [
+    "bin/",
+    "src/",
+    "剪口播/",
+    "字幕/",
+    "高清化/",
+    "README.md"
+  ]
+}
