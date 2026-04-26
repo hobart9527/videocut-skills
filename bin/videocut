@@ -1,0 +1,166 @@
+#!/usr/bin/env node
+
+const { program } = require('commander');
+const chalk = require('chalk');
+const pkg = require('../package.json');
+const config = require('../src/config');
+const { cutCommand } = require('../src/core/cut');
+const { subtitleCommand } = require('../src/core/subtitle');
+const { hdCommand } = require('../src/core/hd');
+const { reviewServer } = require('../src/review/web');
+const { transcribe } = require('../src/core/transcribe');
+
+program
+  .name('videocut')
+  .description(pkg.description)
+  .version(pkg.version)
+  .option('-v, --verbose', 'verbose output');
+
+// --- config ---
+program
+  .command('config')
+  .description('Manage configuration')
+  .argument('[action]', 'get|set|list', 'list')
+  .argument('[key]', 'config key')
+  .argument('[value]', 'config value')
+  .action((action, key, value) => {
+    switch (action) {
+      case 'list':
+        console.log(config.list());
+        break;
+      case 'get':
+        if (!key) { console.error('Usage: videocut config get <key>'); process.exit(1); }
+        console.log(config.get(key));
+        break;
+      case 'set':
+        if (!key || value === undefined) { console.error('Usage: videocut config set <key> <value>'); process.exit(1); }
+        config.set(key, value);
+        console.log(`Set ${key} = ${value}`);
+        break;
+      default:
+        console.error(`Unknown action: ${action}. Use get|set|list`);
+        process.exit(1);
+    }
+  });
+
+// --- cut ---
+program
+  .command('cut <video>')
+  .description('Transcribe, analyze, and cut a talking-head video')
+  .option('-o, --output <dir>', 'output directory')
+  .option('-r, --review <mode>', 'review mode: web|tui|auto|report', 'web')
+  .option('-t, --threshold <s>', 'silence threshold in seconds', '0.3')
+  .option('-p, --port <port>', 'review server port', '8899')
+  .option('--asr <provider>', 'ASR provider: cloud|volcengine|whisper', config.get('asr.provider') || 'volcengine')
+  .option('--no-upload', 'skip audio upload, use local file path')
+  .action(async (video, options) => {
+    try {
+      await cutCommand(video, options);
+    } catch (err) {
+      console.error(chalk.red('Error:'), err.message);
+      if (program.opts().verbose) console.error(err.stack);
+      process.exit(1);
+    }
+  });
+
+// --- transcribe ---
+program
+  .command('transcribe <video>')
+  .description('Transcribe audio to subtitles_words.json')
+  .option('-o, --output <file>', 'output JSON file', 'subtitles_words.json')
+  .option('--asr <provider>', 'ASR provider', config.get('asr.provider') || 'volcengine')
+  .action(async (video, options) => {
+    try {
+      const result = await transcribe(video, options);
+      console.log(chalk.green('Transcription saved:'), result);
+    } catch (err) {
+      console.error(chalk.red('Error:'), err.message);
+      process.exit(1);
+    }
+  });
+
+// --- review ---
+program
+  .command('review')
+  .description('Start the review server (for web mode)')
+  .option('-p, --port <port>', 'server port', '8899')
+  .option('-d, --dir <dir>', 'working directory', '.')
+  .action(async (options) => {
+    await reviewServer(options);
+  });
+
+// --- subtitle ---
+program
+  .command('subtitle <video>')
+  .description('Generate and burn subtitles into video')
+  .option('-s, --srt <file>', 'input SRT file (auto-generate if omitted)')
+  .option('-o, --output <file>', 'output video path')
+  .option('--style <style>', 'subtitle style: default|minimal', 'default')
+  .action(async (video, options) => {
+    try {
+      await subtitleCommand(video, options);
+    } catch (err) {
+      console.error(chalk.red('Error:'), err.message);
+      process.exit(1);
+    }
+  });
+
+// --- hd ---
+program
+  .command('hd <video>')
+  .description('High-quality export with 2-pass encoding + sharpening')
+  .option('-o, --output <file>', 'output video path')
+  .option('-m, --multiplier <n>', 'bitrate multiplier', '1.2')
+  .option('--no-sharpen', 'disable sharpening')
+  .action(async (video, options) => {
+    try {
+      await hdCommand(video, options);
+    } catch (err) {
+      console.error(chalk.red('Error:'), err.message);
+      process.exit(1);
+    }
+  });
+
+// --- install / check ---
+program
+  .command('doctor')
+  .description('Check environment (ffmpeg, node, api keys)')
+  .action(() => {
+    const { execSync } = require('child_process');
+    const fs = require('fs');
+
+    let ok = true;
+
+    // Node
+    try {
+      const v = execSync('node -v', { encoding: 'utf8' }).trim();
+      console.log(chalk.green('✓'), 'Node.js', v);
+    } catch {
+      console.log(chalk.red('✗'), 'Node.js not found');
+      ok = false;
+    }
+
+    // FFmpeg
+    try {
+      const v = execSync('ffmpeg -version', { encoding: 'utf8' }).split('\n')[0];
+      console.log(chalk.green('✓'), v);
+    } catch {
+      console.log(chalk.red('✗'), 'FFmpeg not found. Install: brew install ffmpeg');
+      ok = false;
+    }
+
+    // API key
+    const volcKey = config.get('asr.volcengine.apiKey');
+    if (volcKey) {
+      console.log(chalk.green('✓'), 'Volcengine API key configured');
+    } else {
+      console.log(chalk.yellow('!'), 'Volcengine API key not set. Run: videocut config set asr.volcengine.apiKey <key>');
+    }
+
+    // config file
+    console.log(chalk.gray('  Config:'), config.path);
+
+    process.exit(ok ? 0 : 1);
+  });
+
+program.parse();
